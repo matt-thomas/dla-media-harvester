@@ -39,6 +39,34 @@ def parse_args() -> argparse.Namespace:
 # -------------------------------
 # Helpers
 # -------------------------------
+def unique_path(outdir: pathlib.Path, title: str, ext: str, pointer: str, meta: Dict[str, Any]) -> pathlib.Path:
+    """
+    Return a unique path for this item within outdir.
+    Try plain title first, then add CONTENTdm id, then Identifier field, then numeric suffixes.
+    """
+    base = safe_filename(title) or "Untitled"
+    # 1) plain title
+    p = outdir / f"{base}{ext}"
+    if not p.exists():
+        return p
+    # 2) with CONTENTdm pointer/id
+    p = outdir / f"{base} (id {pointer}){ext}"
+    if not p.exists():
+        return p
+    # 3) with Identifier field if present
+    ident = get_field(meta, ["identi", "identifier"], labels=["Identifier"])
+    if ident:
+        p2 = outdir / f"{base} ({safe_filename(ident)}){ext}"
+        if not p2.exists():
+            return p2
+    # 4) numeric suffix fallback
+    i = 2
+    while True:
+        p3 = outdir / f"{base} ({i}){ext}"
+        if not p3.exists():
+            return p3
+        i += 1
+
 def _frame_has_text(id3, key: str) -> bool:
     """Return True if the ID3 frame exists AND contains non-empty text."""
     vals = id3.getall(key)
@@ -334,12 +362,12 @@ def main():
         album = f"{holding_library} Collection"
 
         suffix = pathlib.Path(picked['suggested_name']).suffix.lower() or ".mp3"
-        filename = safe_filename(f"{title}{suffix}")
 
         outdir = OUTPUT_BASE / safe_filename(artist) / safe_filename(album)
         if not args.dry_run:
             outdir.mkdir(parents=True, exist_ok=True)
-        path = outdir / filename
+
+        path = unique_path(outdir, title, suffix, str(pointer), meta)
 
         media_url = absolute(args.base, picked["url"])
         if args.print_urls:
