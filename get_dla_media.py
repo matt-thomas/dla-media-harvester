@@ -39,6 +39,24 @@ def parse_args() -> argparse.Namespace:
 # -------------------------------
 # Helpers
 # -------------------------------
+def _frame_has_text(id3, key: str) -> bool:
+    """Return True if the ID3 frame exists AND contains non-empty text."""
+    vals = id3.getall(key)
+    for v in vals:
+        t = getattr(v, "text", None)
+        if t:
+            s = "".join(t) if isinstance(t, list) else str(t)
+            if s.strip():
+                return True
+    return False
+
+def _set_text(id3, key, cls, val: Optional[str], overwrite: bool):
+    """Set a text frame if overwrite=True OR if the existing frame is missing/empty."""
+    if not val:
+        return
+    if overwrite or not _frame_has_text(id3, key):
+        id3.setall(key, [cls(encoding=3, text=val)])
+
 def session_with_headers() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": "dla-media-harvester/1.1"})
@@ -195,9 +213,10 @@ def map_id3_tags(meta: Dict[str, Any], title_fallback: str, source_url: str, hol
 def apply_id3(path: pathlib.Path, tags: Dict[str, str], policy: str) -> str:
     if policy == "skip":
         return "skipped"
+
     audio = MP3(path)
     try:
-        id3 = ID3(path)
+        id3 = audio.tags or ID3(path)  # prefer the tag bound to this MP3
     except ID3NoHeaderError:
         id3 = ID3()
 
@@ -209,24 +228,38 @@ def apply_id3(path: pathlib.Path, tags: Dict[str, str], policy: str) -> str:
             id3.setall(key, [cls(encoding=3, text=val)])
 
     overwrite = (policy == "overwrite")
+
     set_text("TIT2", TIT2, tags.get("title"), overwrite)
     set_text("TPE1", TPE1, tags.get("artist"), overwrite)
     set_text("TALB", TALB, tags.get("album"), overwrite)
     set_text("TCON", TCON, tags.get("genre"), overwrite)
     set_text("TCOM", TCOM, tags.get("composer"), overwrite)
+
+    # Year
     yr = tags.get("year")
-    if yr and (overwrite or not existing("TDRC")):
+    if yr and (overwrite or not _frame_has_text(id3, "TDRC")):
         id3.setall("TDRC", [TDRC(encoding=3, text=yr)])
+
+    # Comment
     comment_text = tags.get("comment")
-    if comment_text and (overwrite or not existing("COMM")):
+    if comment_text and (overwrite or not _frame_has_text(id3, "COMM")):
         id3.setall("COMM", [COMM(encoding=3, lang="eng", desc="", text=comment_text)])
+
+    # TXXX frames: overwrite if present and we’re in overwrite mode
+    if overwrite:
+        # remove existing SOURCE_URL / CONTENTDM_ID frames to avoid duplicates
+        for frame in list(id3.getall("TXXX")):
+            desc = getattr(frame, "desc", "").upper()
+            if desc in {"SOURCE_URL", "CONTENTDM_ID"}:
+                id3.delall("TXXX")
+                break
     if tags.get("source_url"):
         id3.add(TXXX(encoding=3, desc="SOURCE_URL", text=tags["source_url"]))
     if tags.get("cdm_id"):
         id3.add(TXXX(encoding=3, desc="CONTENTDM_ID", text=tags["cdm_id"]))
 
-    id3.save(path)
-    audio.save()
+    audio.tags = id3
+    audio.save(v2_version=3, v1=2)
     return "overwritten" if overwrite else "updated"
 
 # -------------------------------

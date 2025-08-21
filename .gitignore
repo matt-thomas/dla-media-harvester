@@ -1,3 +1,4 @@
+.DS_store
 env
 output
 _debug_json
