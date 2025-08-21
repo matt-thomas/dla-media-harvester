@@ -34,10 +34,10 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Search all collections (default)
+### Search all collections
 
 ```bash
-python get_dla_media.py --query "ernie carpenter"
+python get_dla_media.py --query "ernie carpenter" --collection all
 ```
 
 This will:
@@ -54,26 +54,26 @@ python get_dla_media.py --query "ernie carpenter" --collection berea
 
 ### Common Options
 
-- `--collection berea`  
+- `--collection berea`
   Restrict search to a single collection (omit to search all).
 
-- `--media audio`  
-  Accepts any audio type (MP3, WAV, M4A, etc.).  
+- `--media audio`
+  Accepts any audio type (MP3, WAV, M4A, etc.).
   Use `--media mp3` to restrict downloads to MP3 only.
 
-- `--print-urls`  
+- `--print-urls`
   Print discovered media URLs without downloading.
 
-- `--aria2c-list urls.txt`  
+- `--aria2c-list urls.txt`
   Write an aria2c input file for batch downloading.
 
-- `--dump-json`  
+- `--dump-json`
   Save raw JSON for each item in `_debug_json/`.
 
-- `-v`  
+- `-v`
   Verbose logging — shows file candidates and decisions.
 
-- `--dry-run`  
+- `--dry-run`
   Simulate actions without writing files.
 
 ### Example Commands
@@ -104,5 +104,5 @@ python get_dla_media.py --query "ernie carpenter" --dump-json -v
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 See [LICENSE](https://www.gnu.org/licenses/gpl-3.0.en.html) for details.
