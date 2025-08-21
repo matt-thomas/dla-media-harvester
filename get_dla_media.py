@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, os, re, time, pathlib, urllib.parse, json
+import argparse, re, time, pathlib, urllib.parse, json
 from typing import Dict, Any, List, Optional
 import requests
 from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TCON, TDRC, TCOM, TXXX, COMM
@@ -39,20 +39,9 @@ def parse_args() -> argparse.Namespace:
 # -------------------------------
 # Helpers
 # -------------------------------
-def get_field(meta: Dict[str, Any], keys: List[str]) -> Optional[str]:
-    # check top-level first
-    for k in keys:
-        if meta.get(k):
-            return meta[k]
-    # fall back to fields list
-    for f in meta.get("fields", []):
-        if f.get("key") in keys and f.get("value"):
-            return f["value"]
-    return None
-
 def session_with_headers() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "dla-media-harvester/1.0"})
+    s.headers.update({"User-Agent": "dla-media-harvester/1.1"})
     return s
 
 def safe_filename(name: str) -> str:
@@ -96,7 +85,6 @@ def absolute(base: str, url: str) -> str:
         return url
     if url.startswith("http"):
         return url
-    # Ensure '/digital' prefix exists when given '/api/...'
     if url.startswith("/api/"):
         return f"{base}/digital{url}"
     return f"{base}{url}"
@@ -107,7 +95,7 @@ def is_audio_candidate(f: Dict[str, Any], accept_any_audio: bool) -> bool:
     if accept_any_audio:
         if mime.startswith("audio/"):
             return True
-        if name.endswith((".mp3", ".m4a", ".mp4", ".wav")):
+        if name.endswith((".mp3", ".m4a", ".mp4", ".wav", ".aac", ".aiff", ".aif", ".flac", ".ogg", ".oga")):
             return True
         return False
     else:
@@ -120,7 +108,7 @@ def _stream_bytes_url(stream_uri: str) -> str:
     return stream_uri[:-5] if stream_uri.endswith("/json") else stream_uri
 
 def pick_media(meta: Dict[str, Any], accept_any_audio: bool, verbose: bool, base: str) -> Optional[Dict[str, str]]:
-    # singleitem API: often has "files"
+    # Prefer files[]
     files_blob = meta.get("files")
     if files_blob:
         candidates = [f for f in files_blob if is_audio_candidate(f, accept_any_audio)]
@@ -132,7 +120,7 @@ def pick_media(meta: Dict[str, Any], accept_any_audio: bool, verbose: bool, base
                 "url": absolute(base, f.get("download") or f.get("file")),
                 "suggested_name": f.get("name") or "",
             }
-    # modern fields on the record itself
+    # Then record-level URIs
     if meta.get("downloadUri"):
         return {"url": absolute(base, meta["downloadUri"]), "suggested_name": meta.get("filename") or "file"}
     if meta.get("streamUri"):
@@ -151,15 +139,41 @@ def extract_year(d: Optional[str]) -> Optional[str]:
     m = re.search(r"\b(1[89]\d{2}|20\d{2}|21\d{2})\b", d)
     return m.group(1) if m else None
 
-def map_id3_tags(meta: Dict[str, Any], title_fallback: str, source_url: str, collection_name: str) -> Dict[str, str]:
+def get_field(meta: Dict[str, Any], keys: List[str], labels: List[str] = None) -> Optional[str]:
+    """
+    Look up a value by key in top-level or by key/label in the 'fields' array.
+    Keys/labels are matched case-insensitively.
+    """
+    # top-level keys
+    for k in keys:
+        v = meta.get(k)
+        if v:
+            return v
+    # fields array: match by key or label
+    labels = labels or []
+    keyset = {k.lower() for k in keys}
+    labelset = {l.lower() for l in labels}
+    for f in meta.get("fields", []):
+        fk = (f.get("key") or "").lower()
+        fl = (f.get("label") or "").lower()
+        val = f.get("value")
+        if val and (fk in keyset or fl in labelset):
+            return val
+    return None
+
+def map_id3_tags(meta: Dict[str, Any], title_fallback: str, source_url: str, holding_library: str) -> Dict[str, str]:
     title = first_nonempty(meta.get("title"), title_fallback) or "Untitled"
-    artist = get_field(meta, ["primar", "creator", "contributor"]) or "Unknown Artist"
-    album = f"{collection_name} Collection"
-    year = extract_year(first_nonempty(meta.get("date"), meta.get("coverage")))
-    subject = first_nonempty(meta.get("subject"))
-    composer = first_nonempty(meta.get("creator"))
-    rights = first_nonempty(meta.get("rights"))
-    desc = first_nonempty(meta.get("description"), meta.get("descri"))
+    # Artist from Primary Performer/Group (primar), creator, or contributor (any level)
+    artist = get_field(meta, ["primar", "creator", "contributor"],
+                       labels=["Primary Performer / Group", "Creator", "Contributor"]) or "Unknown Artist"
+    album = f"{holding_library} Collection"
+    year = extract_year(first_nonempty(meta.get("date"), meta.get("coverage"),
+                                       get_field(meta, ["date", "covera"], labels=["Date", "Place"])))
+    subject = first_nonempty(meta.get("subject"), get_field(meta, ["subjec"], labels=["Subject"]))
+    composer = first_nonempty(meta.get("creator"), get_field(meta, ["creator"], labels=["Creator"]))
+    rights = first_nonempty(meta.get("rights"), get_field(meta, ["rights"], labels=["Rights"]))
+    desc = first_nonempty(meta.get("description"), meta.get("descri"),
+                          get_field(meta, ["descri", "description"], labels=["Description"]))
 
     comment_lines = []
     if desc: comment_lines.append(desc)
@@ -168,8 +182,8 @@ def map_id3_tags(meta: Dict[str, Any], title_fallback: str, source_url: str, col
 
     return {
         "title": title,
-        "artist": artist or "",
-        "album": album or "",
+        "artist": artist,
+        "album": album,
         "year": year or "",
         "genre": subject or "",
         "composer": composer or "",
@@ -216,7 +230,7 @@ def apply_id3(path: pathlib.Path, tags: Dict[str, str], policy: str) -> str:
     return "overwritten" if overwrite else "updated"
 
 # -------------------------------
-# Collection list resolver
+# Collection display-name map (fallback if holdin missing)
 # -------------------------------
 def get_collection_map(base: str, s: requests.Session) -> Dict[str, str]:
     url = f"{base}/digital/bl/dmwebservices/index.php?q=dmGetCollectionList/json"
@@ -242,8 +256,7 @@ def main():
     args = parse_args()
     s = session_with_headers()
 
-    # If no collection provided, search all
-    coll_for_search = args.collection
+    coll_for_search = args.collection  # default "berea" per CLI
     coll_map = get_collection_map(args.base, s)
 
     items = search_items(args.base, coll_for_search, args.query, args.size, args.max, args.delay, s)
@@ -275,11 +288,18 @@ def main():
             print(f"[skip] alias={alias} id={pointer}  title='{title}'\n       files: none")
             continue
 
-        # Resolve collection display name
-        collection_name = coll_map.get(alias, alias)
+        # Resolve Holding Library -> album name & directory
+        holding_library = get_field(
+            meta,
+            ["holdin"],  # key
+            labels=["Holding Library"]  # label
+        ) or coll_map.get(alias, alias)
 
-        artist = get_field(meta, ["primar", "creator", "contributor"]) or "Unknown Artist"
-        album = f"{collection_name} Collection"
+        # Artist for directory (use same logic as tag)
+        artist = get_field(meta, ["primar", "creator", "contributor"],
+                           labels=["Primary Performer / Group", "Creator", "Contributor"]) or "Unknown Artist"
+        album = f"{holding_library} Collection"
+
         suffix = pathlib.Path(picked['suggested_name']).suffix.lower() or ".mp3"
         filename = safe_filename(f"{title}{suffix}")
 
@@ -292,7 +312,8 @@ def main():
         if args.print_urls:
             print(f"{title}\n{media_url}\n")
             if args.aria2c_list:
-                print(media_url, file=open(args.aria2c_list, "a", encoding="utf-8"))
+                with open(args.aria2c_list, "a", encoding="utf-8") as fh:
+                    fh.write(media_url + "\n")
             continue
 
         if not args.dry_run:
@@ -312,11 +333,11 @@ def main():
             else:
                 print(f"[exists] {path}")
 
-        # ID3 tagging
+        # ID3 tagging for MP3 only
         if not args.dry_run and path.exists() and path.suffix.lower() == ".mp3":
             try:
                 source_page = meta.get("find") or f"{args.base}/digital/collection/{alias}/id/{pointer}"
-                tags = map_id3_tags(meta, title, source_page, collection_name)
+                tags = map_id3_tags(meta, title, source_page, holding_library)
                 result = apply_id3(path, tags, policy=args.retag)
                 tagged_counts[result] += 1
             except Exception as e:
