@@ -5,16 +5,17 @@ A Python CLI tool to harvest audio files (MP3, WAV, M4A, etc.) from CONTENTdm co
 ## Features
 
 - Query CONTENTdm collections by keyword.
+- Searches **all collections by default**; pass `--collection <alias>` to limit to one.
 - Downloads audio files, including compound objects (multi-track albums).
 - Output directory structure:
 
   ```
-  ./output/<artist>/<album>/<song>.<ext>
+  ./output/<artist>/<collection name> Collection/<song>.<ext>
   ```
 
 - ID3 tagging for MP3s:
   - **Artist** from metadata (e.g. “Primary Performer / Group”)
-  - **Album** from `--college-name` (e.g. “Berea College Collection”)
+  - **Album** from collection name (e.g. “Berea College Collection”)
   - **Song title** from metadata (“Title” field)
 - Fallbacks ensure tags are never blank.
 - Verbose mode to debug media selection.
@@ -33,22 +34,28 @@ pip install -r requirements.txt
 
 ## Usage
 
-Basic usage:
+### Search all collections (default)
 
 ```bash
-python get_dla_media.py --query "ernie carpenter" --college-name "Berea College"
+python get_dla_media.py --query "ernie carpenter"
 ```
 
 This will:
 
-- Search Berea’s CONTENTdm collection for “ernie carpenter”
+- Search **all CONTENTdm collections** on the server for “ernie carpenter”
 - Download all available audio files
 - Save them in `./output/Ernie Carpenter/Berea College Collection/...`
 
+### Search a specific collection
+
+```bash
+python get_dla_media.py --query "ernie carpenter" --collection berea
+```
+
 ### Common Options
 
-- `--college-name "Berea College"`  
-  Sets the album tag to `"<College Name> Collection"` and names the album folder accordingly.
+- `--collection berea`  
+  Restrict search to a single collection (omit to search all).
 
 - `--media audio`  
   Accepts any audio type (MP3, WAV, M4A, etc.).  
@@ -74,9 +81,7 @@ This will:
 Download and organize all Ernie Carpenter tracks into structured folders:
 
 ```bash
-python get_dla_media.py --query "ernie carpenter" \
-  --college-name "Berea College" \
-  --media audio -v
+python get_dla_media.py --query "ernie carpenter" --media audio -v
 ```
 
 Only print URLs for external downloading:
